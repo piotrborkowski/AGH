@@ -1,0 +1,154 @@
+1. Prosta instalacja i konfiguracja Fortigate w Azure korzystając z portalu / GUI
+
+Linki:
+
+https://demo.fortigate.com/
+https://github.com/40net-cloud
+https://github.com/40net-cloud/fortinet-azure-solutions/tree/main/FortiGate/A-Single-VM
+
+2. Deployment tego samego środowiska w oparciu o azcli i template arm
+
+Ściągnij z https://github.com/40net-cloud/fortinet-azure-solutions/tree/main/FortiGate/A-Single-VM pliki azuredeploy.json oraz azuredeploy.parameters.json i załaduj je do do swojego shell Azure
+
+Edytuj azuredeploy.parameters.json
+
+"parameters": {
+        "adminUsername": {
+            "value": "fortimaster"
+        },
+        "adminPassword": {
+            "value": "P@ssw0rdP@ssw0rd"
+        },
+        "fortiGateNamePrefix": {
+            "value": "single"
+			
+		 "location": {
+            "value": "eastus"
+
+az group create --name "AGH-1" --location eastus
+az deployment group create --resource-group "AGH-1" --name simple01 --template-file azuredeploy.json --parameters @azuredeploy.parameters.json
+az resource list --resource-group myResourceGroup
+az group delete --name "AGH-1" --yes
+
+3. Deployment grupy z użyciem wbudowanego Ansible
+
+Stwórz i zweryfikuj, póżniej skasuj grupę
+
+ansible localhost -m azure_rm_resourcegroup -a "name=AGH-ansible location=eastus"
+ansible localhost -m azure_rm_resourcegroup -a "name=AGH-ansible location=eastus state=absent force_delete_nonempty=true"
+
+3. Deployment FortiGate z użyciem Ansible
+
+Stwórz playbooka fgt_ansible_deploy.yaml  
+
+- hosts: localhost
+  connection: local
+  tasks:
+    - name: Delete Resource Group
+      azure_rm_resourcegroup:
+        name: AGH-1
+        state: absent
+        force_delete_nonempty: true
+    - name: Create Resorce Group
+      azure_rm_resourcegroup:
+        name: AGH-1
+        location: "eastus"
+    - name: Destroy Deployment
+      azure_rm_deployment:
+        resource_group: AGH-1
+        name: myDeployment
+        state: absent
+    - name: Create Azure Deploy
+      azure_rm_deployment:
+        resource_group: AGH-1
+        name: myDeployment
+        template: "{{ lookup('file', '/home/piotr/AGH/azuredeploy.json') }}"
+        parameters: "{{ (lookup('file', '/home/piotr/AGH/azuredeploy.parameters.json') | from_json).parameters }}"	
+
+Uruchom playbooka
+
+ansible-playbook azure_lab azuredeploy.yaml
+
+4. Inventory + Fortigate API
+
+Playbook do zmiany parametru admin timeout (config system global, set admin-console-timeout 60):
+
+
+---
+- hosts: forti
+  collections:
+   - fortinet.fortios
+  connection: httpapi
+
+  vars:
+   vdom: "root"
+   ansible_httpapi_use_ssl: yes
+   ansible_httpapi_validate_certs: no
+   ansible_httpapi_port: 443
+
+  tasks:
+  - name: Configure global attributes.
+    fortios_system_global:
+      vdom:  "{{ vdom }}"
+      system_global:
+        admintimeout: "60"
+
+Stwórz plik o nazwie inventory
+
+[azure_lab]
+localhost
+[forti]
+single-FGT ansible_host=X.X.X.X ansible_user="fortiadmin" ansible_password="P@ssw0rdP@ssw0rd"
+[forti:vars]
+ansible_network_os=fortinet.fortios.fortios
+
+Uruchom playbooka:
+
+ansible-playbook azure_lab azuredeploy.yaml
+
+10. Reguła firewall
+
+---
+- hosts: forti
+  collections:
+   - fortinet.fortios
+  connection: httpapi
+  
+  vars:
+   vdom: "root"
+   ansible_httpapi_use_ssl: yes
+   ansible_httpapi_validate_certs: no
+   ansible_httpapi_port: 443
+
+  tasks:
+  - name: Configure global attributes.
+    fortios_system_global:
+      vdom: "{{ vdom }}"
+      system_global:
+        admintimeout: "60"
+        timezone: "29"
+  - name: Configure Policy
+    fortios_firewall_policy:
+      vdom: "{{ vdom }}"
+      state: "present"
+      firewall_policy:
+       policyid: "69"
+       name: "Allow80"
+       srcintf:
+         - name: "port1"
+       dstintf:
+         - name: "port2"
+       action: "accept"
+       srcaddr:
+         - name: "all"
+       dstaddr:
+         - name: "all"
+       schedule: "always"
+       service:
+         - name: "HTTP"
+       logtraffic: "all"
+       nat: "enable"
+
+
+
+xMB8Q~nr~KQlL5aXPRmU5WoR06cvesdrMdHiPb.J
